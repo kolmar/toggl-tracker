@@ -190,8 +190,8 @@ def _load_config() -> Config:
     """Loads the configuration from the JSON file."""
     data = _load_json(CONFIG_FILE)
     if data is None:
-        print("Error: Setup incomplete. Please run `toggl setup` first.", file=sys.stderr)
-        sys.exit(1)
+        # Return an empty Config object if the config file doesn't exist
+        return Config()
 
     # Reconstruct Project objects within the projects dictionary
     projects_data = data.get("projects", {})
@@ -647,14 +647,6 @@ def call_handler(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Toggl Command Line Assistant")
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
-
-    # Setup command
-    parser_setup = subparsers.add_parser(
-        "init",
-        aliases=["i"],
-        help="Initialize configuration (fetch org, workspace, projects)",
-    )
-    parser_setup.set_defaults(handler=handle_init)
 
     # Projects command
     parser_projects = subparsers.add_parser(
