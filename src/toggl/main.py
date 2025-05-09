@@ -357,7 +357,7 @@ class ProjectMenu:
         if not is_currently_default:
             project_edit_items.append("[d] Set as default project")
 
-        project_edit_items.append("[b] Back to project list")
+        project_edit_items.append("[b] Back to project list (Esc)")
 
         terminal_menu_actions = TerminalMenu(
             menu_entries=project_edit_items,
@@ -519,10 +519,52 @@ def handle_start(description: str, project: str, billable: bool) -> None:
         sys.exit(1)
 
 
+def handle_current() -> None:
+    """Displays information about the currently running time entry."""
+    
+    # Get the current running time entry from the API
+    current_entry = _make_request("GET", "/me/time_entries/current")
+
+    if not current_entry:
+        print("No task is currently running.")
+        sys.exit(0)
+
+    # Extract details from the current entry
+    task_id = current_entry["id"]
+    description = current_entry.get("description", "No description")
+    project_id = current_entry.get("project_id")
+    start_time_str = current_entry["start"]
+    
+    # Parse the start time from the API response
+    start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+    start_time_local = start_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    
+    # Calculate duration
+    current_time = _get_current_utc_time()
+    duration = current_time - start_time
+    minutes, seconds = divmod(int(duration.total_seconds()), 60)
+    hours, minutes = divmod(minutes, 60)
+    duration_str = f"{hours}h {minutes}m {seconds}s"
+    
+    # Get project name if available
+    project_name = "Unknown Project"
+    config = _load_config()
+    if project_id and project_id in config.projects:
+        project_name = config.projects[project_id].name
+    
+    # Display information
+    print("Currently running task:")
+    print(f"ID:          {task_id}")
+    print(f"Description: {description}")
+    print(f"Project:     {project_name}")
+    print(f"Started at:  {start_time_local}")
+    print(f"Duration:    {duration_str}")
+    billable = current_entry.get("billable", False)
+    print(f"Billable:    {'Yes' if billable else 'No'}")
+
+
 def handle_end() -> None:
     """Stops the currently running time entry with time rounding."""
-    config = _load_config()
-
     # Get the current running time entry from the API
     current_entry = _make_request("GET", "/me/time_entries/current")
 
@@ -629,6 +671,12 @@ def main() -> None:
     parser_end = subparsers.add_parser("end", aliases=["e"], help="End the current time entry")
     parser_end.set_defaults(handler=handle_end)
 
+    # Current command
+    parser_current = subparsers.add_parser(
+        "current", aliases=["c"], help="Display information about the currently running task"
+    )
+    parser_current.set_defaults(handler=handle_current)
+    
     args = parser.parse_args()
     call_handler(args)
 
