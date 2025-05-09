@@ -94,6 +94,7 @@ class Config:
 class State:
     current_task_id: int | None = None
     current_task_start_time: str | None = None  # Store start time as ISO string
+    project_id: int | None = None  # Store project_id for workspace lookup
 
 
 # --- Helper Functions ---
@@ -515,6 +516,7 @@ def handle_start(description: str, project: str, billable: bool) -> None:
         if new_entry and "id" in new_entry:
             state.current_task_id = new_entry["id"]
             state.current_task_start_time = start_time_iso  # Store the rounded start time
+            state.project_id = project.id  # Store the project_id for workspace lookup
             _save_state(state)
             print(f"Task started successfully. ID: {state.current_task_id}")
         else:
@@ -585,9 +587,11 @@ def handle_end() -> None:
             f"Stopping task at calculated time: {final_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
+        # Get workspace_id from the project in config using stored project_id
+        workspace_id = config.projects[state.project_id].workspace_id
         stopped_entry = _make_request(
             "PATCH",
-            f"/workspaces/{config.workspace_id}/time_entries/{task_id}",
+            f"/workspaces/{workspace_id}/time_entries/{task_id}/stop",
             data=payload,
         )
 
@@ -596,6 +600,7 @@ def handle_end() -> None:
             # Clear state only after successful API call
             state.current_task_id = None
             state.current_task_start_time = None
+            state.project_id = None
             _save_state(state)
         else:
             # Sometimes PATCH returns 200 OK with the updated object, sometimes maybe just status?
@@ -604,6 +609,7 @@ def handle_end() -> None:
             # Clear state even if response is minimal, assuming request didn't error.
             state.current_task_id = None
             state.current_task_start_time = None
+            state.project_id = None
             _save_state(state)
 
     except Exception as e:

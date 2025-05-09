@@ -10,5 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-runme = "toggl-tracker.main2:main"
-toggl = "main:main"
+toggl = "toggl.main:main"
