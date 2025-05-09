@@ -519,29 +519,51 @@ def handle_start(description: str, project: str, billable: bool) -> None:
         sys.exit(1)
 
 
+@dataclass
+class TimeEntry:
+    id: int
+    description: str
+    project_id: int | None
+    start: datetime
+    workspace_id: int
+    billable: bool
+
+    @classmethod
+    def from_api_response(cls, data: dict[str, Any]) -> Self:
+        """Creates a TimeEntry object from the API response."""
+        return cls(
+            id=data["id"],
+            description=data.get("description", "No description"),
+            project_id=data.get("project_id"),
+            start=datetime.fromisoformat(data["start"]),
+            workspace_id=data["workspace_id"],
+            billable=data.get("billable", False),
+        )
+
+    @classmethod
+    def fetch_current(cls) -> Self | None:
+        """Fetches the current time entry from the Toggl API."""
+        current_entry = _make_request("GET", "/me/time_entries/current")
+        if not current_entry:
+            return None
+        return cls.from_api_response(current_entry)
+
+
 def handle_current() -> None:
     """Displays information about the currently running time entry."""
     
     # Get the current running time entry from the API
-    current_entry = _make_request("GET", "/me/time_entries/current")
-
-    if not current_entry:
+    task = TimeEntry.fetch_current()
+    if not task:
         print("No task is currently running.")
         sys.exit(0)
-
-    # Extract details from the current entry
-    task_id = current_entry["id"]
-    description = current_entry.get("description", "No description")
-    project_id = current_entry.get("project_id")
-    start_time_str = current_entry["start"]
     
     # Parse the start time from the API response
-    start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
-    start_time_local = start_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    start_time_local = task.start.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     
     # Calculate duration
     current_time = _get_current_utc_time()
-    duration = current_time - start_time
+    duration = current_time - task.start
     minutes, seconds = divmod(int(duration.total_seconds()), 60)
     hours, minutes = divmod(minutes, 60)
     duration_str = f"{hours}h {minutes}m {seconds}s"
@@ -549,42 +571,32 @@ def handle_current() -> None:
     # Get project name if available
     project_name = "Unknown Project"
     config = _load_config()
-    if project_id and project_id in config.projects:
-        project_name = config.projects[project_id].name
+    if task.project_id and task.project_id in config.projects:
+        project_name = config.projects[task.project_id].name
     
     # Display information
     print("Currently running task:")
-    print(f"ID:          {task_id}")
-    print(f"Description: {description}")
+    print(f"ID:          {task.id}")
+    print(f"Description: {task.description}")
     print(f"Project:     {project_name}")
     print(f"Started at:  {start_time_local}")
     print(f"Duration:    {duration_str}")
-    billable = current_entry.get("billable", False)
-    print(f"Billable:    {'Yes' if billable else 'No'}")
+    print(f"Billable:    {'Yes' if task.billable else 'No'}")
 
 
 def handle_end() -> None:
     """Stops the currently running time entry with time rounding."""
-    # Get the current running time entry from the API
-    current_entry = _make_request("GET", "/me/time_entries/current")
+    task = TimeEntry.fetch_current()
 
-    if not current_entry:
-        print(
-            "Error: No task seems to be running according to the Toggl API.",
-            file=sys.stderr,
-        )
+    if not task:
+        print("Error: No task is currently running.", file=sys.stderr,)
         sys.exit(1)
 
-    task_id = current_entry["id"]
-    workspace_id = current_entry["workspace_id"]
-    start_time_str = current_entry["start"]
-
-    print(f"Attempting to stop task ID: {task_id}...")
+    print(f"Attempting to stop task ID: {task.id}...")
 
     try:
         # Parse the start time from the API response
-        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
-        start_time_rounded_down = _round_time_down(start_time)
+        start_time_rounded_down = _round_time_down(task.start)
 
         end_time_actual = _get_current_utc_time()
         end_time_actual_local = end_time_actual.astimezone().strftime("%H:%M")
@@ -604,13 +616,13 @@ def handle_end() -> None:
         final_end_time_iso = _format_iso(end_time_rounded)
 
         # Use the PUT method to update the existing time entry with stop time
-        payload = {"stop": final_end_time_iso, "workspace_id": workspace_id}
+        payload = {"stop": final_end_time_iso, "workspace_id": task.workspace_id}
         end_time_display = end_time_rounded.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         print(f"Stopping task at calculated time: {end_time_display}")
 
         stopped_entry = _make_request(
             "PUT",
-            f"/workspaces/{workspace_id}/time_entries/{task_id}",
+            f"/workspaces/{task.workspace_id}/time_entries/{task.id}",
             data=payload,
         )
 
@@ -618,7 +630,7 @@ def handle_end() -> None:
             print(f"Task '{stopped_entry.get('description', 'N/A')}' stopped successfully.")
 
     except Exception as e:
-        print(f"Error stopping task ID {task_id}: {e}", file=sys.stderr)
+        print(f"Error stopping task ID {task.id}: {e}", file=sys.stderr)
         sys.exit(1)
 
 
