@@ -4,7 +4,6 @@ version = "1.0.0"
 description = "Toggl Command Line Assistant"
 readme = "README.md"
 requires-python = ">=3.13"
-repository = ""
 dependencies = [
     "requests>=2.32.3",
     "simple-term-menu>=1.6.6",
@@ -17,3 +16,6 @@ toggl = "toggl.main:main"
 dev = [
     "ruff>=0.11.8",
 ]
+
+[prject.urls]
+repository = "https://github.com/kolmar/toggl-tracker.git"
