@@ -497,9 +497,9 @@ def handle_start(description: str, project: str, billable: bool) -> None:
     # Clean payload: remove None values if API doesn't like them (project_id)
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    start_time_str = rounded_start_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    start_time_str = rounded_start_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"Starting task '{description}' for project '{project.name}' at {start_time_str}...")
-    print(f"Task will be marked as {'BILLABLE' if billable else 'NON-BILLABLE'}.")
+    print(f"Task will be marked as {'BILLABLE' if payload["billable"] else 'NON-BILLABLE'}.")
 
     try:
         new_entry = _make_request(
@@ -559,26 +559,23 @@ def handle_end() -> None:
 
         final_end_time_iso = _format_iso(final_end_time)
 
-        # Use the PATCH method to update the existing time entry's stop time
+        # Use the PUT method to update the existing time entry with stop time
         payload = {
             "stop": final_end_time_iso,
+            "workspace_id": workspace_id
         }
         print(
             f"Stopping task at calculated time: {final_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
         stopped_entry = _make_request(
-            "PATCH",
-            f"/workspaces/{workspace_id}/time_entries/{task_id}/stop",
+            "PUT",
+            f"/workspaces/{workspace_id}/time_entries/{task_id}",
             data=payload,
         )
-
+        
         if stopped_entry:
             print(f"Task '{stopped_entry.get('description', 'N/A')}' stopped successfully.")
-        else:
-            # Sometimes PATCH returns 200 OK with the updated object, sometimes maybe just status?
-            # Let's assume if no exception, it worked. Check response if needed.
-            print("Task stop request sent. Assuming success (API response was minimal or empty).")
 
     except Exception as e:
         print(f"Error stopping task ID {task_id}: {e}", file=sys.stderr)
