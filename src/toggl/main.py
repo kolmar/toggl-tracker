@@ -499,6 +499,7 @@ def handle_start(description: str, project: str, billable: bool) -> None:
 
     start_time_str = rounded_start_time.strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"Starting task '{description}' for project '{project.name}' at {start_time_str}...")
+    print(f"Task will be marked as {'BILLABLE' if billable else 'NON-BILLABLE'}.")
 
     try:
         new_entry = _make_request(
@@ -625,7 +626,7 @@ def main() -> None:
         dest="billable",
         action="store_false",
         default=True,
-        help="Mark the task as non-billable (default: billable)",
+        help="Mark the task as non-billable (default: using project billable status)",
     )
     parser_start.set_defaults(handler=handle_start)
 
