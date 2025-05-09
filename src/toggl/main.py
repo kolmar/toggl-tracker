@@ -499,7 +499,7 @@ def handle_start(description: str, project: str, billable: bool) -> None:
 
     start_time_str = rounded_start_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"Starting task '{description}' for project '{project.name}' at {start_time_str}...")
-    print(f"Task will be marked as {'BILLABLE' if payload["billable"] else 'NON-BILLABLE'}.")
+    print(f"Task will be marked as {'BILLABLE' if payload['billable'] else 'NON-BILLABLE'}.")
 
     try:
         new_entry = _make_request(
@@ -545,35 +545,33 @@ def handle_end() -> None:
         start_time_rounded_down = _round_time_down(start_time)
 
         end_time_actual = _get_current_utc_time()
+        end_time_actual_local = end_time_actual.astimezone().strftime("%H:%M")
         end_time_rounded_down = _round_time_down(end_time_actual)
 
         # Apply special rounding rule: if start and end fall in the same 15-min block, round end *up*.
         if start_time_rounded_down == end_time_rounded_down:
-            final_end_time = _round_time_up(end_time_actual)
+            end_time_rounded = _round_time_up(end_time_actual)
+            start_time_local = start_time_rounded_down.astimezone().strftime("%H:%M")
             print(
-                f"Note: Task started ({start_time_rounded_down.strftime('%H:%M')}) and ended ({end_time_actual.strftime('%H:%M')}) within the same 15min block. Rounding end time UP."
+                f"Note: Task started ({start_time_local}) and ended ({end_time_actual_local}) within the same 15min block. Rounding end time UP."
             )
         else:
-            final_end_time = end_time_rounded_down
-            print(f"Note: Rounding end time ({end_time_actual.strftime('%H:%M')}) DOWN.")
+            end_time_rounded = end_time_rounded_down
+            print(f"Note: Rounding end time ({end_time_actual_local}) DOWN.")
 
-        final_end_time_iso = _format_iso(final_end_time)
+        final_end_time_iso = _format_iso(end_time_rounded)
 
         # Use the PUT method to update the existing time entry with stop time
-        payload = {
-            "stop": final_end_time_iso,
-            "workspace_id": workspace_id
-        }
-        print(
-            f"Stopping task at calculated time: {final_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-        )
+        payload = {"stop": final_end_time_iso, "workspace_id": workspace_id}
+        end_time_display = end_time_rounded.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        print(f"Stopping task at calculated time: {end_time_display}")
 
         stopped_entry = _make_request(
             "PUT",
             f"/workspaces/{workspace_id}/time_entries/{task_id}",
             data=payload,
         )
-        
+
         if stopped_entry:
             print(f"Task '{stopped_entry.get('description', 'N/A')}' stopped successfully.")
 

@@ -11,3 +11,8 @@ dependencies = [
 
 [project.scripts]
 toggl = "toggl.main:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.8",
+]
