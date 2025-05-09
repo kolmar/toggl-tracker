@@ -81,20 +81,23 @@ class Config:
 
     def get_project(self, selector: str) -> Project | None:
         """Get a project by alias or name."""
+        if not selector:
+            default_project = self._get_default_project()
+            if default_project:
+                print(f"Using default project '{default_project.name}'")
+            else:
+                print("Error: No default project set.", file=sys.stderr)
+            return default_project
+
         for project in self.projects.values():
-            if project.alias == selector or project.name.lower() == selector.lower():
+            alias_matches = project.alias and project.alias == selector
+            name_matches = project.name.lower() == selector.lower()
+            if alias_matches or name_matches:
                 return project
         return None
 
-    def get_default_project(self) -> Project | None:
+    def _get_default_project(self) -> Project | None:
         return self.projects.get(self.default_project_id) if self.default_project_id else None
-
-
-@dataclass
-class State:
-    current_task_id: int | None = None
-    current_task_start_time: str | None = None  # Store start time as ISO string
-    project_id: int | None = None  # Store project_id for workspace lookup
 
 
 # --- Helper Functions ---
@@ -203,18 +206,6 @@ def _save_config(config: Config) -> None:
     _save_json(CONFIG_FILE, asdict(config))
 
 
-def _load_state() -> State:
-    """Loads the state from the JSON file."""
-    data = _load_json(STATE_FILE) or {}
-    return State(**data)
-
-
-def _save_state(state: State) -> None:
-    """Saves the state to the JSON file."""
-    _ensure_data_dir()
-    _save_json(STATE_FILE, asdict(state))
-
-
 def _get_current_utc_time() -> datetime:
     """Gets the current time in UTC."""
     return datetime.now(timezone.utc)
@@ -285,13 +276,12 @@ def _projects_to_dict(projects: list[Project]) -> dict[int, Project]:
     return {project.id: project for project in projects}
 
 
-def handle_setup() -> None:
+def handle_init() -> None:
     """Fetches user, organization, workspace, clients, and projects, saving initial config."""
     print("Running initial setup using /me endpoint...")
     config = Config(projects=_projects_to_dict(_fetch_projects()))
 
     _save_config(config)
-    _save_state(State())  # Reset state on new setup
     print("Setup complete. Configuration updated from /me endpoint and saved to toggl_config.json")
 
 
@@ -470,11 +460,12 @@ def handle_start(description: str, project: str, billable: bool) -> None:
     """Starts a new time entry."""
 
     config = _load_config()
-    state = _load_state()
 
-    if state.current_task_id:
+    # Check if a task is already running
+    current_entry = _make_request("GET", "/me/time_entries/current")
+    if current_entry:
         print(
-            f"Error: A task (ID: {state.current_task_id}) is already running.",
+            f"Error: A task (ID: {current_entry.get('id')}) is already running.",
             file=sys.stderr,
         )
         print("Please end the current task first using `toggl end`.")
@@ -514,11 +505,7 @@ def handle_start(description: str, project: str, billable: bool) -> None:
             "POST", f"/workspaces/{project.workspace_id}/time_entries", data=payload
         )
         if new_entry and "id" in new_entry:
-            state.current_task_id = new_entry["id"]
-            state.current_task_start_time = start_time_iso  # Store the rounded start time
-            state.project_id = project.id  # Store the project_id for workspace lookup
-            _save_state(state)
-            print(f"Task started successfully. ID: {state.current_task_id}")
+            print(f"Task started successfully. ID: {new_entry['id']}")
         else:
             print(
                 "Error: Failed to start task. API response did not contain expected data.",
@@ -528,36 +515,33 @@ def handle_start(description: str, project: str, billable: bool) -> None:
             sys.exit(1)
     except Exception as e:
         print(f"Error starting task: {e}", file=sys.stderr)
-        # Clean up potentially inconsistent state if request failed badly
-        if state.current_task_id:
-            state.current_task_id = None
-            state.current_task_start_time = None
-            _save_state(state)
         sys.exit(1)
 
 
 def handle_end() -> None:
     """Stops the currently running time entry with time rounding."""
     config = _load_config()
-    state = _load_state()
 
-    if not state.current_task_id or not state.current_task_start_time:
+    # Get the current running time entry from the API
+    current_entry = _make_request("GET", "/me/time_entries/current")
+
+    if not current_entry:
         print(
-            "Error: No task seems to be running according to local state.",
+            "Error: No task seems to be running according to the Toggl API.",
             file=sys.stderr,
         )
-        # Optionally: could try fetching '/me/time_entries/current' to double check
         sys.exit(1)
 
-    task_id = state.current_task_id
+    task_id = current_entry["id"]
+    workspace_id = current_entry["workspace_id"]
+    start_time_str = current_entry["start"]
+
     print(f"Attempting to stop task ID: {task_id}...")
 
     try:
-        # Parse the stored start time (which should be the rounded-down one)
-        start_time_stored = datetime.fromisoformat(state.current_task_start_time)
-        start_time_rounded_down = _round_time_down(
-            start_time_stored
-        )  # Should be same, but recalculate for safety
+        # Parse the start time from the API response
+        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+        start_time_rounded_down = _round_time_down(start_time)
 
         end_time_actual = _get_current_utc_time()
         end_time_rounded_down = _round_time_down(end_time_actual)
@@ -575,20 +559,13 @@ def handle_end() -> None:
         final_end_time_iso = _format_iso(final_end_time)
 
         # Use the PATCH method to update the existing time entry's stop time
-        # Note: Toggl API v9 uses PATCH for updating. The '/stop' endpoint might just use current time.
-        # We need to set a specific 'stop' time.
         payload = {
             "stop": final_end_time_iso,
-            # Optionally calculate and set duration, but Toggl usually does this based on start/stop
-            # duration_seconds = int((final_end_time - start_time_rounded_down).total_seconds())
-            # "duration": duration_seconds
         }
         print(
             f"Stopping task at calculated time: {final_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
-        # Get workspace_id from the project in config using stored project_id
-        workspace_id = config.projects[state.project_id].workspace_id
         stopped_entry = _make_request(
             "PATCH",
             f"/workspaces/{workspace_id}/time_entries/{task_id}/stop",
@@ -597,24 +574,13 @@ def handle_end() -> None:
 
         if stopped_entry:
             print(f"Task '{stopped_entry.get('description', 'N/A')}' stopped successfully.")
-            # Clear state only after successful API call
-            state.current_task_id = None
-            state.current_task_start_time = None
-            state.project_id = None
-            _save_state(state)
         else:
             # Sometimes PATCH returns 200 OK with the updated object, sometimes maybe just status?
             # Let's assume if no exception, it worked. Check response if needed.
             print("Task stop request sent. Assuming success (API response was minimal or empty).")
-            # Clear state even if response is minimal, assuming request didn't error.
-            state.current_task_id = None
-            state.current_task_start_time = None
-            state.project_id = None
-            _save_state(state)
 
     except Exception as e:
         print(f"Error stopping task ID {task_id}: {e}", file=sys.stderr)
-        # Don't clear state if the API call failed, the task might still be running on Toggl
         sys.exit(1)
 
 
@@ -634,11 +600,11 @@ def main() -> None:
 
     # Setup command
     parser_setup = subparsers.add_parser(
-        "setup",
-        aliases=["init"],
+        "init",
+        aliases=["i"],
         help="Initialize configuration (fetch org, workspace, projects)",
     )
-    parser_setup.set_defaults(handler=handle_setup)
+    parser_setup.set_defaults(handler=handle_init)
 
     # Projects command
     parser_projects = subparsers.add_parser(
